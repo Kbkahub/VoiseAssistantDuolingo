@@ -1,8 +1,10 @@
 import streamlit as st
 from googletrans import Translator
-import speech_recognition as sr
 from gtts import gTTS
+import sounddevice as sd
+import numpy as np
 from io import BytesIO
+import wave
 
 # Initialize Translator
 translator = Translator()
@@ -23,39 +25,50 @@ languages = {
 selected_language = st.selectbox("Select the language you want to learn:", list(languages.keys()))
 show_explanation = st.checkbox("Show translation explanation")
 
-# Initialize speech recognizer
-recognizer = sr.Recognizer()
+# Function to record audio
+def record_audio(duration=5, samplerate=44100):
+    st.write("Recording...")
+    audio = sd.rec(int(duration * samplerate), samplerate=samplerate, channels=1, dtype='int16')
+    sd.wait()
+    st.write("Recording complete.")
+    return audio, samplerate
 
-# Record audio input
-st.write("Press the button below and speak in English:")
-if st.button("Start Recording"):
-    with sr.Microphone() as source:
-        st.write("Listening...")
-        try:
-            audio = recognizer.listen(source, timeout=5)
-            st.write("Processing...")
-            english_text = recognizer.recognize_google(audio)
-            st.write(f"Recognized Text (English): {english_text}")
-        except sr.UnknownValueError:
-            st.error("Sorry, could not understand the audio.")
-        except sr.RequestError:
-            st.error("Error in the speech recognition service.")
+# Function to save audio to memory (BytesIO buffer)
+def save_audio_to_buffer(audio, samplerate):
+    buffer = BytesIO()
+    with wave.open(buffer, 'wb') as wf:
+        wf.setnchannels(1)  # Mono channel
+        wf.setsampwidth(2)  # 16-bit audio
+        wf.setframerate(samplerate)
+        wf.writeframes(audio.tobytes())
+    buffer.seek(0)
+    return buffer
 
-        if 'english_text' in locals():
-            # Translate to target language
-            target_lang_code = languages[selected_language]
-            translation = translator.translate(english_text, src="en", dest=target_lang_code)
-            translated_text = translation.text
-            st.write(f"Translated Text ({selected_language}): {translated_text}")
+# Main app logic
+if st.button("Record and Translate"):
+    # Record audio
+    duration = st.slider("Recording duration (seconds):", min_value=1, max_value=10, value=5)
+    audio, samplerate = record_audio(duration)
 
-            if show_explanation:
-                st.write(f"Explanation: {translation.extra_data}")
+    # Convert audio to text (placeholder for actual STT implementation)
+    # Here, simulate recognized text for demo purposes:
+    english_text = st.text_input("Simulated recognized text (enter your text here):", "Hello, how are you?")
+    
+    if english_text:
+        # Translate to target language
+        target_lang_code = languages[selected_language]
+        translation = translator.translate(english_text, src="en", dest=target_lang_code)
+        translated_text = translation.text
+        st.write(f"Translated Text ({selected_language}): {translated_text}")
 
-            # Convert translated text to speech
-            tts = gTTS(text=translated_text, lang=target_lang_code)
-            audio_data = BytesIO()
-            tts.write_to_fp(audio_data)
-            audio_data.seek(0)  # Rewind the buffer to the beginning
+        if show_explanation:
+            st.write(f"Explanation: {translation.extra_data}")  # Shows extra translation data
 
-            # Play the audio directly in Streamlit
-            st.audio(audio_data, format="audio/mp3")
+        # Convert translated text to speech
+        tts = gTTS(text=translated_text, lang=target_lang_code)
+        audio_buffer = BytesIO()
+        tts.write_to_fp(audio_buffer)
+        audio_buffer.seek(0)
+
+        # Play the translated audio
+        st.audio(audio_buffer, format="audio/mp3")
