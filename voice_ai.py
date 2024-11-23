@@ -1,10 +1,11 @@
 import streamlit as st
 from googletrans import Translator
 from gtts import gTTS
-import sounddevice as sd
-import numpy as np
 from io import BytesIO
-import wave
+from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, WebRtcMode, ClientSettings
+import numpy as np
+import av
+import asyncio
 
 # Initialize Translator
 translator = Translator()
@@ -25,50 +26,96 @@ languages = {
 selected_language = st.selectbox("Select the language you want to learn:", list(languages.keys()))
 show_explanation = st.checkbox("Show translation explanation")
 
-# Function to record audio
-def record_audio(duration=5, samplerate=44100):
-    st.write("Recording...")
-    audio = sd.rec(int(duration * samplerate), samplerate=samplerate, channels=1, dtype='int16')
-    sd.wait()
-    st.write("Recording complete.")
-    return audio, samplerate
+# Function to process audio and perform speech-to-text
+class AudioProcessor(AudioProcessorBase):
+    def __init__(self):
+        self.audio_frames = []
+        self.result_text = ""
 
-# Function to save audio to memory (BytesIO buffer)
-def save_audio_to_buffer(audio, samplerate):
-    buffer = BytesIO()
-    with wave.open(buffer, 'wb') as wf:
-        wf.setnchannels(1)  # Mono channel
-        wf.setsampwidth(2)  # 16-bit audio
-        wf.setframerate(samplerate)
-        wf.writeframes(audio.tobytes())
-    buffer.seek(0)
-    return buffer
+    def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
+        # Convert the frame to numpy array
+        audio = frame.to_ndarray()
+
+        # Append audio data
+        self.audio_frames.append(audio)
+
+        return frame
+
+# Function to convert audio frames to audio buffer
+def audio_frames_to_bytes(audio_frames):
+    audio_np = np.concatenate(audio_frames)
+    audio_bytes = audio_np.tobytes()
+    return audio_bytes
 
 # Main app logic
-if st.button("Record and Translate"):
-    # Record audio
-    duration = st.slider("Recording duration (seconds):", min_value=1, max_value=10, value=5)
-    audio, samplerate = record_audio(duration)
+def main():
+    st.write("Press 'Start' to begin recording and 'Stop' when you are done.")
 
-    # Convert audio to text (placeholder for actual STT implementation)
-    # Here, simulate recognized text for demo purposes:
-    english_text = st.text_input("Simulated recognized text (enter your text here):", "Hello, how are you?")
-    
-    if english_text:
-        # Translate to target language
-        target_lang_code = languages[selected_language]
-        translation = translator.translate(english_text, src="en", dest=target_lang_code)
-        translated_text = translation.text
-        st.write(f"Translated Text ({selected_language}): {translated_text}")
+    # WebRTC Streamer
+    ctx = webrtc_streamer(
+        key="speech-to-text",
+        mode=WebRtcMode.SENDRECV,
+        client_settings=ClientSettings(
+            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+            media_stream_constraints={"audio": True, "video": False},
+        ),
+        audio_processor_factory=AudioProcessor,
+        async_processing=True,
+    )
 
-        if show_explanation:
-            st.write(f"Explanation: {translation.extra_data}")  # Shows extra translation data
+    if ctx.state.playing:
+        if st.button("Process Audio"):
+            if ctx.audio_processor:
+                audio_processor = ctx.audio_processor
+                # Wait for audio frames to be collected
+                st.info("Processing audio...")
+                # Allow some time for audio to be processed
+                asyncio.run(asyncio.sleep(1))
+                audio_frames = audio_processor.audio_frames
+                if audio_frames:
+                    # Convert audio frames to bytes
+                    audio_bytes = audio_frames_to_bytes(audio_frames)
 
-        # Convert translated text to speech
-        tts = gTTS(text=translated_text, lang=target_lang_code)
-        audio_buffer = BytesIO()
-        tts.write_to_fp(audio_buffer)
-        audio_buffer.seek(0)
+                    # Save audio bytes to a BytesIO buffer
+                    audio_buffer = BytesIO(audio_bytes)
 
-        # Play the translated audio
-        st.audio(audio_buffer, format="audio/mp3")
+                    # Perform speech-to-text using a service (e.g., Google Speech Recognition)
+                    import speech_recognition as sr
+                    recognizer = sr.Recognizer()
+                    with sr.AudioFile(audio_buffer) as source:
+                        audio_data = recognizer.record(source)
+                        try:
+                            english_text = recognizer.recognize_google(audio_data)
+                            st.write(f"Recognized Text (English): {english_text}")
+
+                            # Translate to target language
+                            target_lang_code = languages[selected_language]
+                            translation = translator.translate(english_text, src="en", dest=target_lang_code)
+                            translated_text = translation.text
+                            st.write(f"Translated Text ({selected_language}): {translated_text}")
+
+                            if show_explanation:
+                                st.write(f"Explanation: {translation.extra_data}")  # Shows extra translation data
+
+                            # Convert translated text to speech
+                            tts = gTTS(text=translated_text, lang=target_lang_code)
+                            tts_buffer = BytesIO()
+                            tts.write_to_fp(tts_buffer)
+                            tts_buffer.seek(0)
+
+                            # Play the translated audio
+                            st.audio(tts_buffer, format="audio/mp3")
+
+                        except sr.UnknownValueError:
+                            st.error("Could not understand the audio.")
+                        except sr.RequestError as e:
+                            st.error(f"Could not request results from the speech recognition service; {e}")
+                else:
+                    st.warning("No audio frames received.")
+            else:
+                st.warning("Audio processor not initialized.")
+    else:
+        st.write("Click the 'Start' button to begin.")
+
+if __name__ == "__main__":
+    main()
