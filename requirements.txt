@@ -1,5 +1,8 @@
 streamlit
+streamlit-webrtc
 googletrans==4.0.0-rc1
 gtts
-sounddevice
+speechrecognition
 numpy
+av
+aiortc
