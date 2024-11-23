@@ -53,14 +53,9 @@ def main():
 
     # WebRTC Streamer
     ctx = webrtc_streamer(
-        key="speech-to-text",
-        mode=WebRtcMode.SENDRECV,
-        client_settings=ClientSettings(
-            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-            media_stream_constraints={"audio": True, "video": False},
-        ),
-        audio_processor_factory=AudioProcessor,
-        async_processing=True,
+    key="speech-to-text",
+    rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+    media_stream_constraints={"audio": True, "video": False},
     )
 
     if ctx.state.playing:
